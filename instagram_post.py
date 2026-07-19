@@ -3,8 +3,9 @@
 Aynı Pillow görselini Instagram'a post atar.
 """
 import os
-import json
+import time
 from instagrapi import Client
+from instagrapi.exceptions import LoginRequired
 
 _ENV = os.path.join(os.path.dirname(__file__), ".env")
 _SESSION = os.path.join(os.path.dirname(__file__), "out", "ig_session.json")
@@ -22,43 +23,53 @@ def _load_env():
 
 
 def _get_client():
+    """Instagram, her seferinde kullanıcı/şifre ile yeniden giriş yapılmasını
+    şüpheli bulur (farklı IP'lerden tekrarlayan login = bot işareti). Bu yüzden
+    kayıtlı cihaz/session dosyası varsa SADECE onunla devam edilir; sadece
+    session tamamen geçersizse cookie (sessionid) ya da şifre ile giriş denenir."""
     env = _load_env()
-    username = env["INSTAGRAM_USERNAME"]
-    password = env["INSTAGRAM_PASSWORD"]
-
     cl = Client()
     cl.delay_range = [2, 5]
 
-    # Kaydedilmiş session varsa önce onu dene
     if os.path.exists(_SESSION):
+        cl.load_settings(_SESSION)
         try:
-            cl.load_settings(_SESSION)
-            cl.login(username, password)
+            cl.get_timeline_feed()   # session hâlâ geçerli mi? (yeniden login tetiklemez)
             return cl
-        except Exception:
-            pass
+        except (LoginRequired, Exception):
+            cl = Client()
+            cl.delay_range = [2, 5]
 
-    # Cookie tabanlı giriş (HttpOnly sessionid varsa)
-    if "INSTAGRAM_SESSIONID" in env:
+    if env.get("INSTAGRAM_SESSIONID"):
         try:
             cl.login_by_sessionid(env["INSTAGRAM_SESSIONID"])
             os.makedirs(os.path.dirname(_SESSION), exist_ok=True)
             cl.dump_settings(_SESSION)
             return cl
         except Exception:
-            pass
+            cl = Client()
+            cl.delay_range = [2, 5]
 
-    # Kullanıcı adı/şifre ile giriş
-    cl.login(username, password)
+    cl.login(env["INSTAGRAM_USERNAME"], env["INSTAGRAM_PASSWORD"])
     os.makedirs(os.path.dirname(_SESSION), exist_ok=True)
     cl.dump_settings(_SESSION)
     return cl
 
 
-def send_photo(photo_path, caption=""):
+def send_photo(photo_path, caption="", retries=3):
     cl = _get_client()
-    cl.photo_upload(photo_path, caption=caption)
-    print(f"[IG PAYLAŞILDI] {os.path.basename(photo_path)}")
+    last_err = None
+    for attempt in range(1, retries + 1):
+        try:
+            cl.photo_upload(photo_path, caption=caption)
+            cl.dump_settings(_SESSION)   # cihaz/oturum durumunu her başarılı postta güncel tut
+            print(f"[IG PAYLAŞILDI] {os.path.basename(photo_path)}")
+            return
+        except Exception as e:
+            last_err = e
+            if attempt < retries:
+                time.sleep(5 * attempt)
+    raise last_err
 
 
 if __name__ == "__main__":
