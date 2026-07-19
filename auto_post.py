@@ -17,6 +17,7 @@ Telafi mantığı (Mac kapalıyken atlanan saatleri kapatır):
 import argparse
 import datetime
 import os
+import random
 import sys
 import time
 
@@ -31,10 +32,12 @@ except Exception:
     _IG_ENABLED = False
 
 POST_LOG = os.path.join(C.BASE, "out", "_post_log.csv")
+TARGET_FILE = os.path.join(C.BASE, "out", "_daily_target.txt")
 DAILY_START_HOUR = 8
-DAILY_END_HOUR = 22       # dahil — 8..22 = 15 saat dilimi
-DAILY_TARGET = DAILY_END_HOUR - DAILY_START_HOUR + 1
-CATCH_UP_CAP = 6           # tek çalıştırmada en fazla bu kadar telafi postu at (spam'i önler)
+DAILY_END_HOUR = 22        # dahil — 08:00-22:59 penceresi
+RUN_INTERVAL_MIN = 20      # zamanlayıcı (GitHub Actions) bu aralıkla tetikleniyor
+DAILY_TARGET_RANGE = (15, 20)   # günlük hedef bu aralıkta rastgele seçilir
+IG_JITTER_SEC = (30, 300)       # Telegram'dan sonra IG'ye rastgele gecikmeyle post (bot izini kırar)
 
 
 def _log_post():
@@ -51,15 +54,40 @@ def _today_post_count():
         return sum(1 for line in f if line.strip().startswith(today))
 
 
-def _catch_up_count():
+def _daily_target():
+    """Her gün için 15-20 arası rastgele bir hedef seçer ve dosyada saklar (gün boyu sabit kalır)."""
+    today = datetime.date.today().isoformat()
+    if os.path.exists(TARGET_FILE):
+        with open(TARGET_FILE, "r", encoding="utf-8") as f:
+            saved = f.read().strip()
+        if saved.startswith(today):
+            return int(saved.split(",")[1])
+    target = random.randint(*DAILY_TARGET_RANGE)
+    os.makedirs(os.path.dirname(TARGET_FILE), exist_ok=True)
+    with open(TARGET_FILE, "w", encoding="utf-8") as f:
+        f.write(f"{today},{target}")
+    return target
+
+
+def _pace_decision():
+    """Sabit saatlerde değil, günlük hedefe orantılı rastgele olasılıkla post kararı verir.
+    Bot benzeri tam-saat-başı deseni yerine gün içine organik biçimde dağılır."""
     now = datetime.datetime.now()
     if now.hour < DAILY_START_HOUR or now.hour > DAILY_END_HOUR:
         return 0
-    expected_so_far = now.hour - DAILY_START_HOUR + 1   # bu saat dahil, o ana kadar olması gereken post sayısı
-    expected_so_far = min(expected_so_far, DAILY_TARGET)
+
+    target = _daily_target()
     already = _today_post_count()
-    deficit = max(0, expected_so_far - already)
-    return min(deficit, CATCH_UP_CAP) if deficit > 0 else (0 if already >= DAILY_TARGET else 1)
+    deficit = target - already
+    if deficit <= 0:
+        return 0
+
+    end_of_window = now.replace(hour=DAILY_END_HOUR, minute=59, second=59, microsecond=0)
+    minutes_left = max(RUN_INTERVAL_MIN, (end_of_window - now).total_seconds() / 60)
+    runs_left = max(1, minutes_left / RUN_INTERVAL_MIN)
+
+    prob = min(1.0, deficit / runs_left)
+    return 1 if random.random() < prob else 0
 
 
 def build_caption(item):
@@ -109,10 +137,11 @@ def run(count, dry_run):
 
         if _IG_ENABLED:
             try:
+                jitter = random.randint(*IG_JITTER_SEC)
+                time.sleep(jitter)   # Telegram ile aynı anda atmamak için rastgele gecikme (bot izini kırar)
                 ig_caption = f"{item['title']}\n\n{item.get('summary','')}\n\n#sporkalp #spor #futbol #superlig #transfer"
                 ig_send_photo(out_path, caption=ig_caption)
                 print(f"[IG PAYLAŞILDI] {item['title']}")
-                time.sleep(10)  # Instagram rate limit
             except Exception as e:
                 print(f"[IG HATA] {item['title']} -> {e}")
 
@@ -123,8 +152,8 @@ if __name__ == "__main__":
                     help="Sabit sayıda haber paylaş (verilmezse otomatik telafi mantığı kullanılır)")
     p.add_argument("--dry-run", action="store_true", help="Telegram'a atmadan sadece görsel üret")
     args = p.parse_args()
-    count = args.count if args.count is not None else _catch_up_count()
+    count = args.count if args.count is not None else _pace_decision()
     if count == 0:
-        print("Bugünün 15 hedefi zaten tamamlanmış veya saat penceresi (08-22) dışında — atlanıyor.")
+        print("Bu çalıştırmada post atlanıyor (hedef tamamlandı, pencere dışı ya da rastgele atlama).")
     else:
         run(count, args.dry_run)

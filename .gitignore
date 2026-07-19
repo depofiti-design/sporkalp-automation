@@ -18,3 +18,4 @@ logs/
 !out/_wc_seen_links.txt
 !out/_post_log.csv
 !out/_wc_post_log.csv
+!out/_daily_target.txt
