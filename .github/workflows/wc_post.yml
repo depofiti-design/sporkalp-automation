@@ -1,0 +1,43 @@
+name: Spor'un Kalbi - Dünya Kupası Otomasyonu
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: sporkalp-wc-post
+  cancel-in-progress: false
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Bağımlılıkları kur
+        run: pip install -r requirements-ci.txt
+
+      - name: .env oluştur
+        run: |
+          cat > .env <<EOF
+          TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHANNEL_ID=${{ secrets.TELEGRAM_CHANNEL_ID }}
+          TELEGRAM_CHANNEL_USERNAME=${{ secrets.TELEGRAM_CHANNEL_USERNAME }}
+          EOF
+
+      - name: WC post at
+        run: python wc_post.py
+
+      - name: Durum dosyalarını kaydet
+        run: |
+          git config user.name "sporkalp-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add out/_wc_seen_links.txt out/_wc_post_log.csv 2>/dev/null || true
+          git diff --cached --quiet || git commit -m "chore: WC post log güncelle [skip ci]"
+          git push

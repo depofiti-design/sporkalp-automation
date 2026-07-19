@@ -1,0 +1,4 @@
+pillow==12.2.0
+requests==2.34.2
+feedparser==6.0.11
+instagrapi==2.1.2
