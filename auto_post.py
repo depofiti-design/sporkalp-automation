@@ -27,7 +27,11 @@ from post_template import render_post
 from telegram_post import send_photo as tg_send_photo
 try:
     from instagram_post import send_photo as ig_send_photo
-    _IG_ENABLED = True
+    # GEÇİCİ OLARAK KAPALI: Instagram hesabı şüpheli giriş denemeleri nedeniyle
+    # güvenlik incelemesine takıldı (BadPassword / login_required hataları).
+    # Hesap manuel olarak temizlenip taze bir INSTAGRAM_SESSIONID alınana kadar
+    # tekrar denemek durumu kötüleştirebilir — bilerek kapatıldı.
+    _IG_ENABLED = os.environ.get("IG_POSTING_ENABLED", "0") == "1"
 except Exception:
     _IG_ENABLED = False
 
