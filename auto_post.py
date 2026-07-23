@@ -3,16 +3,15 @@
 Telegram kanalına gönder. Zamanlanmış görev (cron) bu scripti günde N kez çalıştırır.
 
 Kullanım:
-    python auto_post.py            # otomatik telafi modu: günlük 15 hedefine göre eksik varsa tamamlar
-    python auto_post.py --count 3  # telafi mantığını atla, sabit 3 haber paylaş
+    python auto_post.py            # otomatik tempo modu: günlük 15-20 hedefine göre eksik varsa tamamlar
+    python auto_post.py --count 3  # tempo mantığını atla, sabit 3 haber paylaş
     python auto_post.py --dry-run  # görseli üretir, Telegram'a ATMAZ (out/ klasörüne kaydeder)
 
-Telafi mantığı (Mac kapalıyken atlanan saatleri kapatır):
-    Gün 08:00-22:00 arası 15 eşit zaman dilimine bölünür. Mac kapalıyken kaçırılan
-    saatler birikir; bilgisayar tekrar açılıp cron çalıştığında, o günün o ana kadar
-    "olması gereken" post sayısına ulaşılana dek eksik haberler tek seferde (en fazla
-    CATCH_UP_CAP kadar) art arda paylaşılır. Ertesi gün hedef sıfırdan başlar, önceki
-    günün açığı taşınmaz (spam'i önlemek için).
+Tempo mantığı (GitHub Actions'ın tetikleme sıklığı öngörülemez olduğu için):
+    Her gün için 15-20 arası rastgele bir hedef seçilir. Her çalıştırmada, kalan hedef
+    kalan tahmini çalıştırma sayısına orantılı dağıtılır; gerekiyorsa aynı çalıştırmada
+    art arda (rastgele aralıklarla) birden fazla post atılır. Ertesi gün hedef sıfırdan
+    seçilir, önceki günün açığı taşınmaz (spam'i önlemek için).
 """
 import argparse
 import datetime
@@ -39,9 +38,14 @@ POST_LOG = os.path.join(C.BASE, "out", "_post_log.csv")
 TARGET_FILE = os.path.join(C.BASE, "out", "_daily_target.txt")
 DAILY_START_HOUR = 8
 DAILY_END_HOUR = 22        # dahil — 08:00-22:59 penceresi
-RUN_INTERVAL_MIN = 20      # zamanlayıcı (GitHub Actions) bu aralıkla tetikleniyor
+# GitHub Actions'ın schedule cron'u sık sık geciktirdiği için (gözlemlenen: ~20dk yerine
+# ortalama ~90-120dk'da bir tetikleniyor), tek bir çalıştırmanın birden fazla post atabilmesi
+# gerekiyor — yoksa günlük hedefe asla ulaşılamıyor.
+EFFECTIVE_RUN_INTERVAL_MIN = 90
+MAX_POSTS_PER_RUN = 4
 DAILY_TARGET_RANGE = (15, 20)   # günlük hedef bu aralıkta rastgele seçilir
 IG_JITTER_SEC = (30, 300)       # Telegram'dan sonra IG'ye rastgele gecikmeyle post (bot izini kırar)
+INTER_POST_GAP_SEC = (60, 240)  # aynı çalıştırmada birden fazla post varsa aralarındaki rastgele bekleme
 
 
 def _log_post():
@@ -74,8 +78,11 @@ def _daily_target():
 
 
 def _pace_decision():
-    """Sabit saatlerde değil, günlük hedefe orantılı rastgele olasılıkla post kararı verir.
-    Bot benzeri tam-saat-başı deseni yerine gün içine organik biçimde dağılır."""
+    """Günlük hedefe göre bu çalıştırmada kaç post atılacağına karar verir.
+    Zamanlayıcı ne sıklıkla tetiklenirse tetiklensin (GitHub Actions'ın gerçek
+    aralığı öngörülemez), kalan hedef kalan tahmini çalıştırma sayısına orantılı
+    dağıtılır; birden fazla post gerekiyorsa aynı çalıştırmada art arda (rastgele
+    aralıklarla) atılır — böylece hedefe her koşulda ulaşılır."""
     now = datetime.datetime.now()
     if now.hour < DAILY_START_HOUR or now.hour > DAILY_END_HOUR:
         return 0
@@ -87,11 +94,14 @@ def _pace_decision():
         return 0
 
     end_of_window = now.replace(hour=DAILY_END_HOUR, minute=59, second=59, microsecond=0)
-    minutes_left = max(RUN_INTERVAL_MIN, (end_of_window - now).total_seconds() / 60)
-    runs_left = max(1, minutes_left / RUN_INTERVAL_MIN)
+    minutes_left = max(EFFECTIVE_RUN_INTERVAL_MIN, (end_of_window - now).total_seconds() / 60)
+    runs_left = max(1.0, minutes_left / EFFECTIVE_RUN_INTERVAL_MIN)
 
-    prob = min(1.0, deficit / runs_left)
-    return 1 if random.random() < prob else 0
+    expected_this_run = deficit / runs_left
+    count = round(expected_this_run + random.uniform(-0.4, 0.4))
+    if count <= 0 and random.random() < min(1.0, expected_this_run):
+        count = 1
+    return max(0, min(count, deficit, MAX_POSTS_PER_RUN))
 
 
 def build_caption(item):
@@ -113,6 +123,8 @@ def run(count, dry_run):
         return
 
     for idx, item in enumerate(items):
+        if idx > 0 and not dry_run:
+            time.sleep(random.randint(*INTER_POST_GAP_SEC))
         try:
             out_path = render_post(
                 photo_path=item["image"],
