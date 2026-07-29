@@ -36,8 +36,15 @@ except Exception:
 
 POST_LOG = os.path.join(C.BASE, "out", "_post_log.csv")
 TARGET_FILE = os.path.join(C.BASE, "out", "_daily_target.txt")
+TR_OFFSET = datetime.timedelta(hours=3)   # Türkiye UTC+3 (DST yok, 2016'dan beri sabit)
 DAILY_START_HOUR = 8
-DAILY_END_HOUR = 22        # dahil — 08:00-22:59 penceresi
+DAILY_END_HOUR = 22        # dahil — 08:00-22:59 penceresi (Türkiye saati)
+
+
+def _tr_now():
+    """GitHub Actions runner'ları UTC çalışır — datetime.now() Türkiye saatiyle
+    karıştırılırsa pencere 3 saat kayar. Her yerde bunun yerine bu fonksiyon kullanılmalı."""
+    return (datetime.datetime.now(datetime.timezone.utc) + TR_OFFSET).replace(tzinfo=None)
 # GitHub Actions'ın schedule cron'u sık sık geciktirdiği için (gözlemlenen: ~20dk yerine
 # ortalama ~90-120dk'da bir tetikleniyor), tek bir çalıştırmanın birden fazla post atabilmesi
 # gerekiyor — yoksa günlük hedefe asla ulaşılamıyor.
@@ -51,20 +58,20 @@ INTER_POST_GAP_SEC = (60, 240)  # aynı çalıştırmada birden fazla post varsa
 def _log_post():
     os.makedirs(os.path.dirname(POST_LOG), exist_ok=True)
     with open(POST_LOG, "a", encoding="utf-8") as f:
-        f.write(datetime.datetime.now().isoformat() + "\n")
+        f.write(_tr_now().isoformat() + "\n")
 
 
 def _today_post_count():
     if not os.path.exists(POST_LOG):
         return 0
-    today = datetime.date.today().isoformat()
+    today = _tr_now().date().isoformat()
     with open(POST_LOG, "r", encoding="utf-8") as f:
         return sum(1 for line in f if line.strip().startswith(today))
 
 
 def _daily_target():
     """Her gün için 15-20 arası rastgele bir hedef seçer ve dosyada saklar (gün boyu sabit kalır)."""
-    today = datetime.date.today().isoformat()
+    today = _tr_now().date().isoformat()
     if os.path.exists(TARGET_FILE):
         with open(TARGET_FILE, "r", encoding="utf-8") as f:
             saved = f.read().strip()
@@ -83,7 +90,7 @@ def _pace_decision():
     aralığı öngörülemez), kalan hedef kalan tahmini çalıştırma sayısına orantılı
     dağıtılır; birden fazla post gerekiyorsa aynı çalıştırmada art arda (rastgele
     aralıklarla) atılır — böylece hedefe her koşulda ulaşılır."""
-    now = datetime.datetime.now()
+    now = _tr_now()
     if now.hour < DAILY_START_HOUR or now.hour > DAILY_END_HOUR:
         return 0
 

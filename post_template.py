@@ -172,16 +172,20 @@ def render_post(photo_path=None, category="son_dakika", headline="", subheadline
     else:
         cap_y += 18
 
-    # ---- açıklama satırı (kelime ortasında kesilmez, taşarsa '…' ile biter) ----
-    if caption:
-        cf = E.F(28)
-        lines = _wrap_body(d, caption, max_w, cf, max_lines=3)
-        for i, line in enumerate(lines):
-            d.text((45, cap_y + i * (cf.size + 8)), line, font=cf, fill=(235, 235, 235))
-        cap_y += len(lines) * (cf.size + 8)
-
     # ---- kaynak + kanal handle (alt şerit, sabit konum — kurumsal imza) ----
     foot_y = H - 56
+
+    # ---- açıklama satırı (kelime ortasında kesilmez, taşarsa '…' ile biter) ----
+    # Alt şeritle çakışmaması için kaç satır sığdığı başlık yüksekliğine göre hesaplanır
+    # (headline 2 satır sürünce sabit max_lines=3 alt şeride taşabiliyordu).
+    if caption:
+        cf = E.F(28)
+        line_h = cf.size + 8
+        max_lines_fit = max(1, (foot_y - 14 - cap_y) // line_h)
+        lines = _wrap_body(d, caption, max_w, cf, max_lines=min(3, max_lines_fit))
+        for i, line in enumerate(lines):
+            d.text((45, cap_y + i * line_h), line, font=cf, fill=(235, 235, 235))
+        cap_y += len(lines) * line_h
     foot_font = E.F(24)
     left = f"{source}" if source else ""
     d.text((45, foot_y), left, font=foot_font, fill=(190, 190, 190))
