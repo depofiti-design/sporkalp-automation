@@ -34,6 +34,16 @@ def _classify(title, summary):
     return "gundem"
 
 
+# Gerçek haber değil, bahis sitesi tanıtım/tüyo içeriği — RSS'te normal haber gibi
+# göründüğü için ayrıca filtrelenmesi gerekiyor.
+_BETTING_PROMO_BLOCKLIST = ["misli", "iddaa", "nesine", "bilyoner", "tuyo", "tüyo"]
+
+
+def _is_betting_promo(title, summary):
+    text = f"{title} {summary}".lower()
+    return any(w in text for w in _BETTING_PROMO_BLOCKLIST)
+
+
 def _is_valid_image_url(url):
     if not url or not url.startswith("http"):
         return False
@@ -156,6 +166,8 @@ def fetch_news(limit=15, mark_as_seen=True, max_age_hours=48):
             summary = _clean_summary(entry.get("summary", "") or entry.get("description", ""))
             image = _extract_image(entry)
             if not title or not image or not _is_valid_image_url(image):
+                continue
+            if _is_betting_promo(title, summary):
                 continue
             buckets.append({
                 "title": title,
